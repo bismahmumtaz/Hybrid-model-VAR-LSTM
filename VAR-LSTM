@@ -1,0 +1,109 @@
+#HYBRID MODEL of VAR-LSTM
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy
+from sklearn.metrics import mean_absolute_error
+!git clone https://github.com/mad-stat/XEWNet
+
+###For Sanjuan
+Ahmedabad_data_set = pd.read_csv("/content/XEWNet/Dataset/Sanjuan_data_weekly.csv")
+print(Ahmedabad_data_set.head())
+Ahmedabad_data_set['Date'] = pd.to_datetime(Ahmedabad_data_set['Year'].astype(str) + Ahmedabad_data_set['Week'].astype(str) + '1', format='%Y%W%w')
+Ahmedabad_data_set.set_index('Date', inplace=True)
+plt.figure(figsize=(10, 6))
+plt.plot(Ahmedabad_data_set.index, Ahmedabad_data_set['Cases'], color='blue')
+plt.xlabel('Date')
+plt.ylabel('Cases')
+plt.title('Time Series Plot of Cases in  Sanjuan')
+plt.grid(True)
+plt.show()
+week = 52
+print(Ahmedabad_data_set.head())
+##defining errors
+import numpy as np
+from sklearn.metrics import mean_squared_error, mean_absolute_error
+
+def rmse(y_true, y_pred):
+    return np.sqrt(mean_squared_error(y_true, y_pred))
+
+def mae(y_true, y_pred):
+    return mean_absolute_error(y_true, y_pred)
+
+def smape(y_true, y_pred):
+    numerator = np.abs(y_true - y_pred)
+    denominator = (np.abs(y_true) + np.abs(y_pred)) / 2
+    return np.mean(numerator / denominator) * 100
+
+def mase(test_data, forecast_data):
+    mae = mean_absolute_error(test_data, forecast_data)
+    naive_forecast = test_data[:-1]
+    naive_mae = mean_absolute_error(naive_forecast, test_data[1:])
+
+    # Calculate MASE
+    mase = mae / naive_mae
+    return mase
+####Var modell
+from statsmodels.tsa.vector_ar.var_model import VAR
+from statsmodels.tsa.arima.model import ARIMA
+data = Ahmedabad_data_set[['Cases','Rain']]
+train_data = data.iloc[:-12]  # Use all but the last 12 rows for training
+test_data = data.iloc[-12:]  # Use the last 12 rows for testing
+model = VAR(train_data,exog=train_data[['Rain']])
+model_fit = model.fit()
+lag_order = model_fit.k_ar
+print("Lag Order:", 2)
+forecast_input = data.values[-3:]
+forecast = model_fit.forecast(y=forecast_input, steps=len(data,),exog_future=data[['Rain']])
+forecast_df = pd.DataFrame(forecast, index=data.index, columns=data.columns)
+###### LSTM###########
+data = Ahmedabad_data_set[['Cases','Week']]
+data['varpredictions'] = forecast_df['Cases']
+data['week'] = ((data['Week'] -1)  * np.pi / week)
+data['weekcos'] = np.cos(data['week'])
+data['weeksin'] = np.sin(data['week'])
+print(data)
+# print(data[['Week','week','weeksin','weekcos']].head(55))
+data = data.drop('week',axis = 1)
+data = data.drop('Week',axis = 1)
+
+def df_to_X_y(df, window_size=5):
+    df_as_np = df.to_numpy()
+    X = []
+    y = []
+    for i in range(len(df_as_np) - window_size):
+        row = df_as_np[i:i + window_size]
+        X.append(row)
+        label = df_as_np[i + window_size][0]
+        y.append(label)
+    return np.array(X), np.array(y)
+
+x, y = df_to_X_y(data)
+x_train, y_train = x[:300], y[:300]
+x_eval, y_eval = x[300:400], y[300:400]
+x_test, y_test = x[400:424], y[400:424]
+x.shape,y.shape
+
+from keras.models import Sequential
+from keras.layers import LSTM, Dense, InputLayer
+from keras.callbacks import ModelCheckpoint
+from keras.optimizers import Adam
+
+model = Sequential()
+model.add(InputLayer(input_shape=(5, 4)))
+model.add(LSTM(720))
+model.add(Dense(32, activation='relu'))
+model.add(Dense(1, activation='linear'))
+model.compile(loss='mean_squared_error', optimizer='adam')
+cp1 = ModelCheckpoint('model/', save_best_only=True)
+# model1.compile(loss=MeanSquaredError(), optimizer=Adam(learning_rate=0.0001), metrics=[RootMeanSquaredError()])
+model.summary()
+model.fit(x_train,y_train,validation_data=(x_eval,y_eval), epochs= 10)
+
+train_predictions = model.predict(x_test).flatten()
+train_predictions = [int(x) for x in train_predictions]
+print(train_predictions)
+print(y_test)
+print("Root mean sqaure",rmse(train_predictions,y_test))
+print("Mean absolute",mae(train_predictions,y_test))
+print("SMAPE",smape(train_predictions,y_test))
+print('mase',mase(train_predictions,y_test))
